@@ -1,0 +1,11 @@
+{
+  "browserId": "google-chrome",
+  "profileMode": "personal",
+  "debugPort": 9222,
+  "userDataDir": null,
+  "extensionId": null,
+  "enableInIncognito": true,
+  "gitRemote": "origin",
+  "gitBranch": null,
+  "launchUrl": "about:blank"
+}
