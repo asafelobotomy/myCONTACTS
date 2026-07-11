@@ -35,6 +35,14 @@ export function expandHome(pathValue) {
   return pathValue;
 }
 
+export function hasConfigFile() {
+  return existsSync(CONFIG_PATH);
+}
+
+export function hasSavedInstallConfig(config) {
+  return Boolean(config.browserId && config.userDataDir);
+}
+
 export function loadConfig() {
   if (!existsSync(CONFIG_PATH)) {
     return { ...DEFAULT_CONFIG };

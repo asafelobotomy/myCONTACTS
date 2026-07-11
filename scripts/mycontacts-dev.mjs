@@ -34,6 +34,7 @@ import {
   DIST_DIR,
   findBrowserById,
   findBrowserFromConfig,
+  hasSavedInstallConfig,
   loadConfig,
   parseProfileMode,
   REPO_ROOT,
@@ -70,12 +71,14 @@ Options:
   --profile=personal   Install into your daily browser profile
   --profile=dev        Install into an isolated development profile
   --launch             Launch browser if debug port is not already open
+  --restart-browser    Restart a running personal-profile browser without prompting (non-interactive)
   --no-pull            Skip git pull
   --no-install         Skip npm install/ci
   --no-build           Skip npm run build
   --no-reload          Build only; do not touch the browser
   --dry-run            Print actions without executing them
   --yes, -y            Non-interactive mode (use saved/default settings)
+  --setup              Re-run browser/profile setup (ignore saved config)
 
 Environment:
   BROWSER_PATH         Override browser binary path
@@ -85,10 +88,12 @@ Examples:
   node scripts/mycontacts-dev.mjs update
   node scripts/mycontacts-dev.mjs update --profile=personal --launch
   node scripts/mycontacts-dev.mjs update --browser=brave --profile=dev --yes
+  node scripts/mycontacts-dev.mjs update --setup
   BROWSER_PATH=/usr/bin/chromium node scripts/mycontacts-dev.mjs status
 
 Config:
   .mycontacts-dev.json — saved browser/profile/debug settings
+  After the first interactive setup, update/reload reuse this file and skip the questionnaire.
 `;
 
 function parseArgs(argv) {
@@ -200,6 +205,22 @@ function buildExtension(dryRun) {
   }
 }
 
+function shouldRunSetupQuestionnaire(config, flags, cliOptions, prompt) {
+  if (!prompt) {
+    return false;
+  }
+
+  if (flags.has("--setup") || flags.has("--reconfigure")) {
+    return true;
+  }
+
+  if (cliOptions.browserId || cliOptions.profileMode) {
+    return false;
+  }
+
+  return !hasSavedInstallConfig(config);
+}
+
 async function resolveRuntimeSettings(config, flags, cliOptions, { prompt = isInteractive(flags) } = {}) {
   const installedBrowsers = discoverBrowsers();
   if (!installedBrowsers.length) {
@@ -231,8 +252,9 @@ async function resolveRuntimeSettings(config, flags, cliOptions, { prompt = isIn
   }
 
   let profileMode = cliOptions.profileMode ?? config.profileMode ?? "personal";
+  const runSetupQuestionnaire = shouldRunSetupQuestionnaire(config, flags, cliOptions, prompt);
 
-  if (prompt) {
+  if (runSetupQuestionnaire) {
     info("Browser detection");
     if (desktopId) {
       log(
@@ -289,15 +311,27 @@ async function resolveRuntimeSettings(config, flags, cliOptions, { prompt = isIn
       profileMode === "dev" ? 1 : 0,
     );
     profileMode = profileChoice.value;
-  } else if (!browser) {
-    browser = defaultBrowser ?? installedBrowsers[0];
+  } else {
+    if (!browser) {
+      if (hasSavedInstallConfig(config)) {
+        fail(
+          `Saved browser '${config.browserId}' is not installed.`,
+          "node scripts/mycontacts-dev.mjs update --setup",
+        );
+      }
+      browser = defaultBrowser ?? installedBrowsers[0];
+    }
+
+    if (hasSavedInstallConfig(config)) {
+      log(`Using saved install settings (${config.browserId}, ${profileMode} profile).`);
+    }
   }
 
   const runtime = applyBrowserToConfig(config, browser, profileMode);
   const profileInspection =
     profileMode === "personal" ? inspectBrowserProfile(browser, profileMode) : null;
 
-  if (prompt) {
+  if (runSetupQuestionnaire) {
     const accepted = await confirmSelection("Review install settings", [
       `Browser: ${browser.name} (${browser.family}-based)`,
       `Profile: ${profileMode} (${runtime.userDataDir})`,
@@ -334,6 +368,51 @@ async function resolveRuntimeSettings(config, flags, cliOptions, { prompt = isIn
   return { runtime, browser, profileMode };
 }
 
+function extensionsPageUrl(browser) {
+  switch (browser.id) {
+    case "brave":
+    case "brave-origin":
+      return "brave://extensions";
+    case "microsoft-edge":
+      return "edge://extensions";
+    case "vivaldi":
+      return "vivaldi://extensions";
+    case "opera":
+      return "opera://extensions";
+    default:
+      return "chrome://extensions";
+  }
+}
+
+function printManualExtensionSteps(browser, runtime, { installing = false } = {}) {
+  const extensionsUrl = extensionsPageUrl(browser);
+  const distPath = resolve(DIST_DIR);
+
+  info("Manual extension steps");
+  log(
+    `${browser.name} is running without remote debugging — keeping it open instead of forcing a restart.`,
+  );
+  log("");
+
+  if (installing) {
+    log("To install myCONTACTS:");
+    log(`  1. Open ${extensionsUrl}`);
+    log("  2. Enable Developer mode");
+    log(`  3. Click Load unpacked and select ${distPath}`);
+  } else {
+    log("To apply this build:");
+    log(`  1. Open ${extensionsUrl}`);
+    log("  2. Find myCONTACTS and click Reload");
+    if (runtime.extensionId) {
+      log(`     (extension id: ${runtime.extensionId})`);
+    }
+  }
+
+  log("");
+  log("For fully automated reload/install next time, answer Yes when asked to restart the browser,");
+  log(`or run with --launch --restart-browser, or use --profile=dev for an isolated browser.`);
+}
+
 async function ensureChromiumDebugBrowser(runtime, browser, flags, dryRun) {
   if (browser.family !== "chromium") {
     return false;
@@ -361,24 +440,22 @@ async function ensureChromiumDebugBrowser(runtime, browser, flags, dryRun) {
 
   if (browser.family === "chromium" && isBrowserRunning(browser)) {
     if (runtime.profileMode === "personal") {
-      const interactive = isInteractive(flags);
-      if (interactive) {
+      let shouldRestart =
+        flags.has("--restart-browser") || flags.has("--close-browser");
+
+      if (!shouldRestart && isInteractive(flags)) {
         info(`${browser.name} is currently running.`);
-        log(
-          "To install into your personal profile, the browser must restart with remote debugging enabled.",
-        );
-        const closeConfirmed = await confirm(`Close ${browser.name} now?`, false);
-        if (!closeConfirmed) {
-          fail("Cancelled. Close the browser manually and re-run with --launch.");
-        }
-      } else if (!flags.has("--yes")) {
-        fail(
-          `${browser.name} is running. Close it first or re-run interactively to confirm shutdown.`,
-        );
+        log("Automated reload requires restarting the browser with remote debugging enabled.");
+        shouldRestart = await confirm(`Restart ${browser.name} now?`, false);
+      }
+
+      if (!shouldRestart) {
+        printManualExtensionSteps(browser, runtime, { installing: !runtime.extensionId });
+        return false;
       }
 
       if (!dryRun) {
-        log(`Closing ${browser.name}...`);
+        log(`Restarting ${browser.name}...`);
         stopBrowser(browser);
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 1500));
       }
@@ -574,6 +651,9 @@ async function commandLaunch(config, flags, cliOptions) {
 
 async function commandUpdate(config, flags, cliOptions) {
   const dryRun = flags.has("--dry-run");
+  if (hasSavedInstallConfig(config) && !flags.has("--setup") && !flags.has("--reconfigure")) {
+    log("Saved install config found — skipping setup questionnaire.");
+  }
   const { runtime, browser } = await resolveRuntimeSettings(config, flags, cliOptions);
 
   if (!flags.has("--no-pull")) {
@@ -595,7 +675,11 @@ async function commandUpdate(config, flags, cliOptions) {
     return;
   }
 
-  await ensureChromiumDebugBrowser(runtime, browser, flags, dryRun);
+  const cdpReady = await ensureChromiumDebugBrowser(runtime, browser, flags, dryRun);
+  if (!cdpReady) {
+    log("Done: build ready — reload the extension manually (see steps above).");
+    return;
+  }
   const result = await reloadOrLoadExtension(runtime, dryRun);
   log(`Done: ${result.action} extension${result.extensionId ? ` (${result.extensionId})` : ""}.`);
   log("Open the side panel from the myCONTACTS toolbar button.");
@@ -625,7 +709,17 @@ async function main() {
         await installForFirefox(browser, runtime, new Set([...flags, "--launch"]), flags.has("--dry-run"));
         return;
       }
-      await ensureChromiumDebugBrowser(runtime, browser, new Set([...flags, "--launch"]), flags.has("--dry-run"));
+      const reloadFlags = new Set([...flags, "--launch"]);
+      const cdpReady = await ensureChromiumDebugBrowser(
+        runtime,
+        browser,
+        reloadFlags,
+        flags.has("--dry-run"),
+      );
+      if (!cdpReady) {
+        log("Reload skipped — apply changes manually (see steps above).");
+        return;
+      }
       await reloadOrLoadExtension(runtime, flags.has("--dry-run"));
       log("Reload complete.");
       return;
