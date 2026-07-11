@@ -7,5 +7,5 @@
   "enableInIncognito": true,
   "gitRemote": "origin",
   "gitBranch": null,
-  "launchUrl": "about:blank"
+  "launchUrl": null
 }

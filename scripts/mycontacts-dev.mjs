@@ -25,9 +25,6 @@ import {
   findExtensionByPath,
   getInstalledExtensions,
   isDebugPortOpen,
-  loadUnpackedExtension,
-  reloadExtensionServiceWorker,
-  uninstallExtension,
 } from "./lib/cdp.mjs";
 import {
   applyBrowserToConfig,
@@ -53,15 +50,15 @@ Usage:
   node scripts/mycontacts-dev.mjs <command> [options]
 
 Commands:
-  update     Pull (optional), install deps, build, and install/reload extension (default)
+  update     Pull (optional), install deps, build, and apply extension update (default)
   build      Install deps and build dist/
-  reload     Install/reload the extension in the selected browser
-  launch     Start the selected browser with CDP enabled (Chromium-based only)
+  reload     Restart browser or show manual reload steps
+  launch     Start the browser with CDP enabled (optional advanced use)
   status     Show repo, browser, profile, and extension status
   help       Show this help
 
 Browser support:
-  Chromium-based (automated load/reload via CDP):
+  Chromium-based (restart reloads unpacked extensions from dist/):
     Google Chrome, Chromium, Brave, Edge, Vivaldi, Opera
   Firefox-based (manual temporary install — this extension targets Chrome MV3):
     Firefox, Firefox ESR, LibreWolf, Floorp
@@ -70,8 +67,8 @@ Options:
   --browser=<id>       Browser id (e.g. google-chrome, chromium, firefox)
   --profile=personal   Install into your daily browser profile
   --profile=dev        Install into an isolated development profile
-  --launch             Launch browser if debug port is not already open
-  --restart-browser    Restart a running personal-profile browser without prompting (non-interactive)
+  --launch             Launch the browser when it is not already running
+  --restart-browser    Restart a running browser without prompting (non-interactive)
   --no-pull            Skip git pull
   --no-install         Skip npm install/ci
   --no-build           Skip npm run build
@@ -85,14 +82,13 @@ Environment:
   CHROME_PATH          Alias for BROWSER_PATH
 
 Examples:
-  node scripts/mycontacts-dev.mjs update
-  node scripts/mycontacts-dev.mjs update --profile=personal --launch
-  node scripts/mycontacts-dev.mjs update --browser=brave --profile=dev --yes
-  node scripts/mycontacts-dev.mjs update --setup
+  node scripts/mycontacts-dev.mjs update --launch
+  node scripts/mycontacts-dev.mjs update --yes --restart-browser --launch
+  node scripts/mycontacts-dev.mjs update --setup --launch
   BROWSER_PATH=/usr/bin/chromium node scripts/mycontacts-dev.mjs status
 
 Config:
-  .mycontacts-dev.json — saved browser/profile/debug settings
+  .mycontacts-dev.json — saved browser/profile settings
   After the first interactive setup, update/reload reuse this file and skip the questionnaire.
 `;
 
@@ -339,7 +335,7 @@ async function resolveRuntimeSettings(config, flags, cliOptions, { prompt = isIn
         ? `Profile status: ${formatProfileSummary(profileInspection)}`
         : `Profile status: ${listProfileContents(browser)}`,
       browser.supportsAutomation
-        ? "Install method: automated via Chrome DevTools Protocol"
+        ? "Install method: build dist/, then restart browser or reload at chrome://extensions"
         : "Install method: manual temporary add-on (Firefox)",
       browser.family === "firefox"
         ? "Note: myCONTACTS is a Chrome MV3 extension; Firefox support is best-effort and temporary"
@@ -389,9 +385,6 @@ function printManualExtensionSteps(browser, runtime, { installing = false } = {}
   const distPath = resolve(DIST_DIR);
 
   info("Manual extension steps");
-  log(
-    `${browser.name} is running without remote debugging — keeping it open instead of forcing a restart.`,
-  );
   log("");
 
   if (installing) {
@@ -400,136 +393,97 @@ function printManualExtensionSteps(browser, runtime, { installing = false } = {}
     log("  2. Enable Developer mode");
     log(`  3. Click Load unpacked and select ${distPath}`);
   } else {
-    log("To apply this build:");
+    log("To apply this build without restarting:");
     log(`  1. Open ${extensionsUrl}`);
     log("  2. Find myCONTACTS and click Reload");
     if (runtime.extensionId) {
       log(`     (extension id: ${runtime.extensionId})`);
     }
   }
-
-  log("");
-  log("For fully automated reload/install next time, answer Yes when asked to restart the browser,");
-  log(`or run with --launch --restart-browser, or use --profile=dev for an isolated browser.`);
 }
 
-async function ensureChromiumDebugBrowser(runtime, browser, flags, dryRun) {
-  if (browser.family !== "chromium") {
-    return false;
-  }
-
-  if (await isDebugPortOpen(runtime.debugPort)) {
-    log(`Debug port ${runtime.debugPort} is already open.`);
-    return true;
-  }
-
-  const mustLaunch = flags.has("--launch") || isInteractive(flags);
-  if (!mustLaunch && !flags.has("--yes")) {
-    fail(
-      `Debug port ${runtime.debugPort} is not reachable.`,
-      "Re-run with --launch, or start the browser manually with remote debugging enabled.",
-    );
-  }
-
-  if (!mustLaunch && flags.has("--yes")) {
-    fail(
-      `Debug port ${runtime.debugPort} is not reachable.`,
-      "node scripts/mycontacts-dev.mjs update --launch --yes",
-    );
-  }
-
-  if (browser.family === "chromium" && isBrowserRunning(browser)) {
-    if (runtime.profileMode === "personal") {
-      let shouldRestart =
-        flags.has("--restart-browser") || flags.has("--close-browser");
-
-      if (!shouldRestart && isInteractive(flags)) {
-        info(`${browser.name} is currently running.`);
-        log("Automated reload requires restarting the browser with remote debugging enabled.");
-        shouldRestart = await confirm(`Restart ${browser.name} now?`, false);
-      }
-
-      if (!shouldRestart) {
-        printManualExtensionSteps(browser, runtime, { installing: !runtime.extensionId });
-        return false;
-      }
-
-      if (!dryRun) {
-        log(`Restarting ${browser.name}...`);
-        stopBrowser(browser);
-        await new Promise((resolveDelay) => setTimeout(resolveDelay, 1500));
-      }
-    } else {
-      warn(`${browser.name} is already running. An isolated dev profile will be launched separately.`);
-    }
-  }
-
-  if (dryRun) {
-    log(`[dry-run] ${formatLaunchCommand(browser, runtime)}`);
-    return true;
-  }
-
-  info(`Launching ${browser.name} (${runtime.profileMode} profile)...`);
-  if (runtime.profileMode === "personal" && browser.family === "chromium") {
-    const inspection = inspectBrowserProfile(browser, "personal");
-    log(`Profile: ${formatProfileSummary(inspection)}`);
-    if (inspection.looksFresh) {
-      warn(
-        "This profile path has no extensions yet. If the browser opens like a fresh install, delete .mycontacts-dev.json and re-run.",
-      );
-    }
-  }
-  log(formatLaunchCommand(browser, runtime));
-  launchChromiumBrowser(browser, runtime);
-
-  const ready = await waitForDebugPort(runtime.debugPort);
-  if (!ready) {
-    fail(
-      `${browser.name} did not open debug port ${runtime.debugPort} in time.`,
-      "node scripts/mycontacts-dev.mjs launch --foreground",
-    );
-  }
-
-  return true;
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function reloadOrLoadExtension(runtime, dryRun) {
+async function applyChromiumExtensionUpdate(runtime, browser, flags, dryRun) {
   if (!existsSync(resolve(DIST_DIR, "manifest.json"))) {
     fail("dist/manifest.json not found. Run build first.", "node scripts/mycontacts-dev.mjs build");
   }
 
-  const distPath = resolve(DIST_DIR);
-  if (dryRun) {
-    log(`[dry-run] load/reload extension from ${distPath}`);
-    return { action: "dry-run", extensionId: runtime.extensionId };
+  const profileDir = runtime.userDataDir;
+  const browserIsRunning = () => isBrowserRunning(browser, profileDir);
+
+  const firstInstall = !runtime.extensionId;
+
+  if (firstInstall) {
+    printManualExtensionSteps(browser, runtime, { installing: true });
+    if (!dryRun && flags.has("--launch") && !browserIsRunning()) {
+      log(`Launching ${browser.name}...`);
+      launchChromiumBrowser(browser, runtime, {
+        debugging: false,
+        openUrl: extensionsPageUrl(browser),
+      });
+    }
+    return { action: "manual-install" };
   }
 
-  const installed = await getInstalledExtensions(runtime.debugPort);
-  const existing = findExtensionByPath(installed.extensions, distPath);
+  if (browserIsRunning()) {
+    let shouldRestart = flags.has("--restart-browser") || flags.has("--close-browser");
 
-  if (existing?.id) {
-    log(`Reloading installed extension ${existing.id}...`);
-    try {
-      await reloadExtensionServiceWorker(runtime.debugPort, existing.id);
-      runtime.extensionId = existing.id;
-      saveConfig(runtime);
-      return { action: "reloaded", extensionId: existing.id };
-    } catch (error) {
-      warn(`${error instanceof Error ? error.message : error} Trying reinstall...`);
-      await uninstallExtension(runtime.debugPort, existing.id);
+    if (!shouldRestart && isInteractive(flags)) {
+      info(`${browser.name} is currently running.`);
+      log("A full restart reloads the unpacked extension from dist/ automatically.");
+      shouldRestart = await confirm(`Restart ${browser.name} now?`, true);
+    }
+
+    if (!shouldRestart) {
+      printManualExtensionSteps(browser, runtime, { installing: false });
+      return { action: "manual-reload" };
+    }
+
+    if (!dryRun) {
+      log(`Restarting ${browser.name}...`);
+      stopBrowser(browser, { userDataDir: profileDir });
+      await sleep(2500);
+
+      if (browserIsRunning()) {
+        warn(`${browser.name} is still running — not opening another window.`);
+        printManualExtensionSteps(browser, runtime, { installing: false });
+        return { action: "manual-reload" };
+      }
     }
   }
 
-  log(`Loading unpacked extension from ${distPath}...`);
-  const loaded = await loadUnpackedExtension(
-    runtime.debugPort,
-    distPath,
-    runtime.enableInIncognito,
-  );
+  if (dryRun) {
+    log(`[dry-run] ${formatLaunchCommand(browser, runtime, { debugging: false })}`);
+    return { action: "restarted", extensionId: runtime.extensionId };
+  }
 
-  runtime.extensionId = loaded.id;
-  saveConfig(runtime);
-  return { action: "loaded", extensionId: loaded.id };
+  if (!browserIsRunning()) {
+    log(`Launching ${browser.name}...`);
+    log(formatLaunchCommand(browser, runtime, { debugging: false }));
+    launchChromiumBrowser(browser, runtime, { debugging: false });
+  }
+
+  return { action: "restarted", extensionId: runtime.extensionId };
+}
+
+function logExtensionUpdateResult(browser, result) {
+  switch (result.action) {
+    case "restarted":
+      log(`Done: ${browser.name} restarted — myCONTACTS loads from dist/.`);
+      break;
+    case "manual-reload":
+      log("Done: build ready — reload manually (see steps above).");
+      break;
+    case "manual-install":
+      log("Done: build ready — load unpacked once (see steps above).");
+      break;
+    default:
+      break;
+  }
+  log("Open the side panel from the myCONTACTS toolbar button.");
 }
 
 async function installForFirefox(browser, runtime, flags, dryRun) {
@@ -606,9 +560,11 @@ async function commandStatus(config, flags, cliOptions) {
   log(`Debug port open:   ${debugOpen ? "yes" : "no"}`);
 
   if (!debugOpen) {
-    log(`Launch command:    ${formatLaunchCommand(browser, runtime)}`);
+    log(`Launch command:    ${formatLaunchCommand(browser, runtime, { debugging: false })}`);
     return;
   }
+
+  log(`Debug launch:      ${formatLaunchCommand(browser, runtime, { debugging: true })}`);
 
   try {
     const installed = await getInstalledExtensions(runtime.debugPort);
@@ -628,14 +584,17 @@ async function commandLaunch(config, flags, cliOptions) {
   const { runtime, browser } = await resolveRuntimeSettings(config, flags, cliOptions);
   if (browser.family !== "chromium") {
     fail(
-      `${browser.name} does not support CDP extension loading.`,
-      "Use a Chromium-based browser for automated install, or run update to get Firefox manual steps.",
+      `${browser.name} does not support CDP launch.`,
+      "Use a Chromium-based browser, or run update for Firefox manual steps.",
     );
   }
 
-  info(`Launching ${browser.name}...`);
-  log(formatLaunchCommand(browser, runtime));
-  launchChromiumBrowser(browser, runtime, { foreground: flags.has("--foreground") });
+  info(`Launching ${browser.name} with CDP (optional)...`);
+  log(formatLaunchCommand(browser, runtime, { debugging: true }));
+  launchChromiumBrowser(browser, runtime, {
+    debugging: true,
+    foreground: flags.has("--foreground"),
+  });
 
   if (flags.has("--foreground")) {
     return;
@@ -675,17 +634,8 @@ async function commandUpdate(config, flags, cliOptions) {
     return;
   }
 
-  const cdpReady = await ensureChromiumDebugBrowser(runtime, browser, flags, dryRun);
-  if (!cdpReady) {
-    log("Done: build ready — reload the extension manually (see steps above).");
-    return;
-  }
-  const result = await reloadOrLoadExtension(runtime, dryRun);
-  log(`Done: ${result.action} extension${result.extensionId ? ` (${result.extensionId})` : ""}.`);
-  log("Open the side panel from the myCONTACTS toolbar button.");
-  if (runtime.profileMode === "personal") {
-    log("Installed into your personal profile — it will persist across normal browser launches.");
-  }
+  const result = await applyChromiumExtensionUpdate(runtime, browser, flags, dryRun);
+  logExtensionUpdateResult(browser, result);
 }
 
 async function main() {
@@ -710,18 +660,13 @@ async function main() {
         return;
       }
       const reloadFlags = new Set([...flags, "--launch"]);
-      const cdpReady = await ensureChromiumDebugBrowser(
+      const result = await applyChromiumExtensionUpdate(
         runtime,
         browser,
         reloadFlags,
         flags.has("--dry-run"),
       );
-      if (!cdpReady) {
-        log("Reload skipped — apply changes manually (see steps above).");
-        return;
-      }
-      await reloadOrLoadExtension(runtime, flags.has("--dry-run"));
-      log("Reload complete.");
+      logExtensionUpdateResult(browser, result);
       return;
     }
     case "launch":

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import {
@@ -472,34 +472,130 @@ export function resolveProfileDir(browser, profileMode) {
   return expandHome(raw);
 }
 
-export function isBrowserRunning(browser) {
-  const patterns = [
-    browser.binaryPath,
-    browser.launchTarget,
-    browser.name,
-    browser.id,
-  ].filter(Boolean);
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-  for (const pattern of patterns) {
-    const result = spawnSync("pgrep", ["-f", pattern], { stdio: "ignore" });
-    if (result.status === 0) {
-      return true;
+function isProcessAlive(pid) {
+  return spawnSync("kill", ["-0", String(pid)], { stdio: "ignore" }).status === 0;
+}
+
+export function parseChromiumSingletonLockPid(userDataDir) {
+  const lockPath = join(userDataDir, "SingletonLock");
+
+  try {
+    const target = readlinkSync(lockPath);
+    const delimiter = target.lastIndexOf("-");
+    if (delimiter === -1) {
+      return null;
+    }
+
+    const pid = Number.parseInt(target.slice(delimiter + 1), 10);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function findChromiumProfilePids(userDataDir) {
+  /** @type {Set<number>} */
+  const pids = new Set();
+
+  const lockPid = parseChromiumSingletonLockPid(userDataDir);
+  if (lockPid && isProcessAlive(lockPid)) {
+    pids.add(lockPid);
+  }
+
+  const escapedProfileDir = escapeRegex(userDataDir);
+  const byProfileArg = spawnSync("pgrep", ["-f", `--user-data-dir=${escapedProfileDir}`], {
+    encoding: "utf8",
+  });
+  if (byProfileArg.status === 0) {
+    for (const line of byProfileArg.stdout.trim().split("\n")) {
+      const pid = Number.parseInt(line, 10);
+      if (Number.isFinite(pid) && pid > 0) {
+        pids.add(pid);
+      }
     }
   }
 
-  return false;
+  return [...pids];
 }
 
-export function stopBrowser(browser) {
-  const commands = [];
-  if (browser.binaryPath) {
-    commands.push(["pkill", ["-x", basename(browser.binaryPath)]]);
-  }
-  commands.push(["pkill", ["-f", browser.launchTarget]]);
+export function isChromiumProfileRunning(userDataDir) {
+  return findChromiumProfilePids(userDataDir).length > 0;
+}
 
-  for (const [command, args] of commands) {
-    spawnSync(command, args, { stdio: "ignore" });
+function signalChromiumProfile(userDataDir, signal) {
+  for (const pid of findChromiumProfilePids(userDataDir)) {
+    spawnSync("kill", [`-${signal}`, String(pid)], { stdio: "ignore" });
   }
+
+  const escapedProfileDir = escapeRegex(userDataDir);
+  spawnSync("pkill", [`-${signal}`, "-f", `--user-data-dir=${escapedProfileDir}`], {
+    stdio: "ignore",
+  });
+}
+
+export function stopChromiumProfile(userDataDir, { timeoutMs = 8000 } = {}) {
+  if (!isChromiumProfileRunning(userDataDir)) {
+    return;
+  }
+
+  signalChromiumProfile(userDataDir, "TERM");
+
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (!isChromiumProfileRunning(userDataDir)) {
+      return;
+    }
+    spawnSync("sleep", ["0.25"]);
+  }
+
+  signalChromiumProfile(userDataDir, "KILL");
+}
+
+export function isBrowserRunning(browser, userDataDir = null) {
+  if (browser.family === "chromium" && userDataDir) {
+    return isChromiumProfileRunning(userDataDir);
+  }
+
+  const processName = browser.binaryPath
+    ? basename(browser.binaryPath)
+    : basename(browser.launchTarget);
+
+  if (!processName) {
+    return false;
+  }
+
+  return spawnSync("pgrep", ["-x", processName], { stdio: "ignore" }).status === 0;
+}
+
+export function stopBrowser(browser, { userDataDir = null, timeoutMs = 8000 } = {}) {
+  if (browser.family === "chromium" && userDataDir) {
+    stopChromiumProfile(userDataDir, { timeoutMs });
+    return;
+  }
+
+  const processName = browser.binaryPath
+    ? basename(browser.binaryPath)
+    : basename(browser.launchTarget);
+
+  if (!processName || !isBrowserRunning(browser, userDataDir)) {
+    return;
+  }
+
+  spawnSync("pkill", ["-TERM", "-x", processName], { stdio: "ignore" });
+
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (!isBrowserRunning(browser, userDataDir)) {
+      return;
+    }
+    spawnSync("sleep", ["0.25"]);
+  }
+
+  spawnSync("pkill", ["-9", "-x", processName], { stdio: "ignore" });
 }
 
 export function getFirefoxDefaultProfile(browser) {

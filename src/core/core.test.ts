@@ -167,20 +167,50 @@ describe("export service", () => {
 
   it("exports CSV", () => {
     const result = exportContacts(sample, "csv");
-    expect(result.mimeType).toBe("text/csv");
+    expect(result.mimeType).toBe("text/csv;charset=utf-8");
+    expect(result.content).toContain("First Name");
+    expect(result.content).toContain("Phone 1 - Value");
     expect(result.content).toContain("export@example.com");
+    expect(result.content.startsWith("\uFEFF")).toBe(true);
   });
 
-  it("exports JSON", () => {
+  it("exports JSON as jCard", () => {
     const result = exportContacts(sample, "json");
-    expect(result.mimeType).toBe("application/json");
-    expect(JSON.parse(result.content)).toHaveLength(1);
+    expect(result.mimeType).toBe("application/vcard+json");
+    const parsed = JSON.parse(result.content) as unknown[];
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed[0]?.[0]).toBe("vcard");
   });
 
   it("exports vCard", () => {
     const result = exportContacts(sample, "vcard");
-    expect(result.mimeType).toBe("text/vcard");
+    expect(result.mimeType).toBe("text/vcard;charset=utf-8");
     expect(result.content).toContain("BEGIN:VCARD");
+    expect(result.content).toContain("VERSION:4.0");
     expect(result.content).toContain("Export Test");
+    expect(result.content).toContain("REV:");
+    expect(result.content).toContain("CATEGORIES:");
+  });
+
+  it("exports vCard with structured N property when names are present", () => {
+    const result = exportContacts(
+      [
+        {
+          id: "named-contact",
+          source: "whatsapp-web",
+          displayName: "Aaron Flynn",
+          givenName: "Aaron",
+          familyName: "Flynn",
+          phones: [{ value: "+14155550104", e164: "+14155550104" }],
+          extractedAt: "2026-01-01T00:00:00.000Z",
+          confidence: "structured",
+        },
+      ],
+      "vcard",
+    );
+
+    expect(result.content).toContain("FN:Aaron Flynn");
+    expect(result.content).toContain("N:Flynn;Aaron;;;");
+    expect(result.content).toContain("TEL;TYPE=cell:");
   });
 });

@@ -39,17 +39,28 @@ export function seedDeveloperProfile(userDataDir, { personal = false, profileDir
 }
 
 function buildLaunchArgs(config, options = {}) {
-  const args = [
-    `--user-data-dir=${config.userDataDir}`,
-    `--remote-debugging-port=${config.debugPort}`,
-    "--enable-unsafe-extension-debugging",
-    "--no-first-run",
-    "--no-default-browser-check",
-    config.launchUrl,
-  ];
+  const debugging = options.debugging === true;
+  const args = [`--user-data-dir=${config.userDataDir}`];
 
   if (config.profileDirectory && config.profileDirectory !== "Default") {
-    args.splice(1, 0, `--profile-directory=${config.profileDirectory}`);
+    args.push(`--profile-directory=${config.profileDirectory}`);
+  }
+
+  if (debugging) {
+    args.push(
+      `--remote-debugging-port=${config.debugPort}`,
+      "--remote-debugging-address=127.0.0.1",
+      "--enable-unsafe-extension-debugging",
+    );
+  }
+
+  args.push("--no-first-run", "--no-default-browser-check");
+
+  const openUrl = options.openUrl ?? config.launchUrl;
+  if (openUrl && openUrl !== "about:blank") {
+    args.push(openUrl);
+  } else {
+    args.push("--restore-last-session");
   }
 
   if (options.newWindow) {
@@ -112,7 +123,7 @@ export function launchFirefoxBrowser(browser, config, options = {}) {
   return child;
 }
 
-export async function waitForDebugPort(port, timeoutMs = 20_000) {
+export async function waitForDebugPort(port, timeoutMs = 30_000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     try {
@@ -128,8 +139,8 @@ export async function waitForDebugPort(port, timeoutMs = 20_000) {
   return false;
 }
 
-export function formatLaunchCommand(browser, config) {
-  const args = buildLaunchArgs(config).map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg));
+export function formatLaunchCommand(browser, config, options = {}) {
+  const args = buildLaunchArgs(config, options).map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg));
   switch (browser.launchKind) {
     case "flatpak":
       return `flatpak run ${browser.launchTarget} ${args.join(" ")}`;

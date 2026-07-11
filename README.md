@@ -14,7 +14,7 @@ Local-first browser extension for extracting, storing, and exporting contact inf
 - **Named contacts by default**: phone-only entries optional via settings
 - **Rich WhatsApp export**: saved names, push names, business fields, JID, status, photo URL when present in local cache
 - **Local library**: dedupe/merge, paginated side panel, optional AES-GCM passphrase encryption
-- **Export**: CSV, vCard (`.vcf`), or JSON with formula-injection hardening in CSV
+- **Export**: Google Contacts CSV, RFC 6350 vCard 4.0 (`.vcf`), RFC 7095 jCard JSON — with formula-injection hardening in CSV
 - **Privacy controls**: per-platform toggles, regex fallback opt-in, first-scan disclaimer
 - **Secure clear**: **Clear library** wipes IndexedDB, encrypted metadata, legacy keys, unlock keys, and in-panel scan data
 - **On-demand injection**: content script loads only when you scan (stable loader for MV3)
@@ -109,7 +109,7 @@ npm run lint         # TypeScript check
 | `./scripts/mycontacts-dev reload --launch` | Reload/load extension from existing `dist/` |
 | `./scripts/mycontacts-dev build` | Install deps + build only |
 | `./scripts/mycontacts-dev status` | Show saved browser, profile, extension state |
-| `./scripts/mycontacts-dev launch` | Start browser with CDP enabled (Chromium) |
+| `./scripts/mycontacts-dev launch` | Start browser with CDP enabled (optional debugging) |
 | `./scripts/mycontacts-dev update --setup` | Re-run browser/profile questionnaire |
 | `./scripts/mycontacts-dev update --restart-browser` | Skip restart prompt; close and relaunch browser (use with `--yes`) |
 
@@ -121,8 +121,8 @@ Settings are saved locally in `.mycontacts-dev.json` (gitignored). See `scripts/
 
 Browser notes:
 
-- **Chromium-based** (Chrome, Brave, Edge, …): automated load/reload via CDP after optional browser restart
-- **Browser already open?** The script asks **Restart [browser] now?** — Yes restarts with debugging enabled; No prints manual reload steps at `brave://extensions` / `chrome://extensions`
+- **Chromium-based** (Chrome, Brave, Edge, …): build `dist/`, then restart the browser or click Reload at `chrome://extensions` — a full restart reloads unpacked extensions from `dist/` automatically
+- **Browser already open?** The script asks **Restart [browser] now?** — Yes kills and relaunches the browser (no debug port required); No prints manual reload steps
 - **Non-interactive restart:** `./scripts/mycontacts-dev update --launch --yes --restart-browser`
 - **Firefox-based**: manual temporary add-on steps (extension targets Chrome MV3)
 - **Personal profile**: extension persists in your daily browser

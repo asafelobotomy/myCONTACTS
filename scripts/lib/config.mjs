@@ -25,7 +25,7 @@ export const DEFAULT_CONFIG = {
   enableInIncognito: true,
   gitRemote: "origin",
   gitBranch: null,
-  launchUrl: "about:blank",
+  launchUrl: null,
 };
 
 export function expandHome(pathValue) {
