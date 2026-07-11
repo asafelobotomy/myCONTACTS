@@ -30,7 +30,7 @@ export function buildGoogleCsvHeaders(
   maxEmails: number,
   maxWebsites: number,
 ): string[] {
-  const headers = [...GOOGLE_CSV_BASE_HEADERS];
+  const headers: string[] = [...GOOGLE_CSV_BASE_HEADERS];
 
   for (let index = 1; index <= maxEmails; index += 1) {
     headers.push(`E-mail ${index} - Label`, `E-mail ${index} - Value`);

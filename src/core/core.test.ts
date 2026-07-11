@@ -177,8 +177,7 @@ describe("export service", () => {
   it("exports JSON as jCard", () => {
     const result = exportContacts(sample, "json");
     expect(result.mimeType).toBe("application/vcard+json");
-    const parsed = JSON.parse(result.content) as unknown[];
-    expect(Array.isArray(parsed)).toBe(true);
+    const parsed = JSON.parse(result.content) as Array<[string, ...unknown[]]>;
     expect(parsed[0]?.[0]).toBe("vcard");
   });
 
