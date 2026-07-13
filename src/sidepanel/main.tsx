@@ -1,5 +1,6 @@
 import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { exportContacts } from "../core/export-service";
 import { listPhoneRegions, phoneRegionLabel } from "../core/phone-region";
 import { contactPersonName } from "../core/contact-utils";
 import type {
@@ -10,6 +11,7 @@ import type {
   PlatformId,
 } from "../core/types";
 import { DEFAULT_PLATFORM_TOGGLES } from "../core/types";
+import { validateContacts } from "../core/validation";
 import { downloadTextFile, sendRuntimeMessage } from "./messaging";
 import "./styles.css";
 
@@ -208,15 +210,15 @@ function App() {
       return;
     }
     setBusy(true);
-    const response = await sendRuntimeMessage({
-      type: "EXPORT_CONTACTS",
-      payload: { contacts: selectedContacts, format },
-    });
-    if (response.type === "EXPORT_RESULT") {
-      downloadTextFile(response.payload.filename, response.payload.mimeType, response.payload.content);
+    try {
+      const contacts = validateContacts(selectedContacts);
+      const exported = exportContacts(contacts, format);
+      downloadTextFile(exported.filename, exported.mimeType, exported.content);
       setStatus(`Exported ${selectedContacts.length} contact(s) as ${format.toUpperCase()}.`);
-    } else if (response.type === "ERROR") {
-      setError(response.payload);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      setError(err.message);
+      setStatus("Export failed.");
     }
     setBusy(false);
   }

@@ -1,3 +1,4 @@
+import { contactDisplayName } from "./contact-utils";
 import type { Contact, ContactEmail, ContactPhone } from "./types";
 
 /** Google Contacts CSV supports many slots; cap keeps files readable. */
@@ -139,6 +140,41 @@ export function vcardEmailType(email: ContactEmail): string | undefined {
   }
 }
 
+export function vcard30PhoneType(phone: ContactPhone): string {
+  switch (phone.type?.toLowerCase()) {
+    case "home":
+      return "HOME";
+    case "work":
+      return "WORK";
+    case "fax":
+      return "FAX";
+    case "pager":
+      return "PAGER";
+    case "mobile":
+    case "cell":
+    default:
+      return "CELL";
+  }
+}
+
+export function vcard30EmailTypes(email: ContactEmail): string[] {
+  switch (email.type?.toLowerCase()) {
+    case "home":
+      return ["INTERNET", "HOME"];
+    case "work":
+      return ["INTERNET", "WORK"];
+    case "other":
+      return ["INTERNET", "OTHER"];
+    default:
+      return ["INTERNET"];
+  }
+}
+
+export function formatVcard30EmailLine(email: ContactEmail): string {
+  const typeParams = vcard30EmailTypes(email).map((type) => `TYPE=${type}`).join(";");
+  return `EMAIL;${typeParams}:${escapeVcardText(email.value)}`;
+}
+
 export function formatPhoneExportValue(phone: ContactPhone): string {
   return phone.e164 ?? phone.value;
 }
@@ -244,6 +280,157 @@ export function injectJcardNComponent(
   }
 
   return ["vcard", [nComponent, ...properties]];
+}
+
+export function buildVcardNote(contact: Contact): string | undefined {
+  const parts: string[] = [];
+
+  if (contact.notes?.trim()) {
+    parts.push(contact.notes.trim());
+  }
+
+  if (contact.sourceId?.trim()) {
+    parts.push(`Source ID: ${contact.sourceId.trim()}`);
+  }
+
+  if (contact.sourceUrl?.trim()) {
+    parts.push(`Source URL: ${contact.sourceUrl.trim()}`);
+  }
+
+  return parts.length ? parts.join("\n") : undefined;
+}
+
+export function serializeContactVcard30(contact: Contact): string {
+  const lines: string[] = [
+    "BEGIN:VCARD",
+    "VERSION:3.0",
+    `FN:${escapeVcardText(contactDisplayName(contact))}`,
+  ];
+
+  const nLine = formatVcardNLine(contact);
+  if (nLine) {
+    lines.push(nLine);
+  }
+
+  lines.push(`UID:urn:uuid:${contact.id}`);
+  lines.push("PRODID:-//myCONTACTS//EN");
+  lines.push(`REV:${toVcardTimestamp(contact.extractedAt)}`);
+
+  const nicknames = (contact.alternateNames ?? [])
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (nicknames.length === 1) {
+    lines.push(`NICKNAME:${escapeVcardText(nicknames[0]!)}`);
+  } else if (nicknames.length > 1) {
+    lines.push(`NICKNAME:${nicknames.map(escapeVcardText).join(",")}`);
+  }
+
+  for (const phone of contact.phones ?? []) {
+    const type = vcard30PhoneType(phone);
+    lines.push(`TEL;TYPE=${type}:${escapeVcardText(formatPhoneExportValue(phone))}`);
+  }
+
+  for (const email of contact.emails ?? []) {
+    lines.push(formatVcard30EmailLine(email));
+  }
+
+  if (contact.org?.trim()) {
+    lines.push(`ORG:${escapeVcardText(contact.org.trim())}`);
+  }
+
+  if (contact.title?.trim()) {
+    lines.push(`TITLE:${escapeVcardText(contact.title.trim())}`);
+  }
+
+  for (const url of contact.urls ?? []) {
+    const trimmed = url.trim();
+    if (trimmed) {
+      lines.push(`URL:${trimmed}`);
+    }
+  }
+
+  if (contact.photoUrl?.trim()) {
+    lines.push(`PHOTO;VALUE=URI:${contact.photoUrl.trim()}`);
+  }
+
+  const categories = ["myCONTACTS", contact.source.trim()].filter(Boolean);
+  lines.push(`CATEGORIES:${categories.map(escapeVcardText).join(",")}`);
+
+  const note = buildVcardNote(contact);
+  if (note) {
+    lines.push(`NOTE:${escapeVcardText(note)}`);
+  }
+
+  lines.push("END:VCARD");
+  return lines.join("\r\n");
+}
+
+export function serializeContactJcard(contact: Contact): [string, JcardProperty[]] {
+  const props: JcardProperty[] = [
+    ["version", {}, "text", "4.0"],
+    ["kind", {}, "text", "individual"],
+    ["fn", {}, "text", contactDisplayName(contact)],
+  ];
+
+  const nComponent = buildJcardNComponent(contact);
+  if (nComponent) {
+    props.push(nComponent);
+  }
+
+  props.push(["uid", {}, "uri", `urn:uuid:${contact.id}`]);
+  props.push(["prodid", {}, "text", "-//myCONTACTS//EN"]);
+  props.push(["rev", {}, "timestamp", toVcardTimestamp(contact.extractedAt)]);
+
+  const nicknames = (contact.alternateNames ?? [])
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (nicknames.length === 1) {
+    props.push(["nickname", {}, "text", nicknames[0]!]);
+  } else if (nicknames.length > 1) {
+    props.push(["nickname", {}, "text", nicknames]);
+  }
+
+  for (const phone of contact.phones ?? []) {
+    const type = vcardPhoneType(phone);
+    props.push(["tel", { type }, "uri", formatTelUri(phone)]);
+  }
+
+  for (const email of contact.emails ?? []) {
+    const type = vcardEmailType(email);
+    props.push(type ? ["email", { type }, "text", email.value] : ["email", {}, "text", email.value]);
+  }
+
+  if (contact.org?.trim()) {
+    props.push(["org", {}, "text", contact.org.trim()]);
+  }
+
+  if (contact.title?.trim()) {
+    props.push(["title", {}, "text", contact.title.trim()]);
+  }
+
+  for (const url of contact.urls ?? []) {
+    const trimmed = url.trim();
+    if (trimmed) {
+      props.push(["url", {}, "uri", trimmed]);
+    }
+  }
+
+  if (contact.photoUrl?.trim()) {
+    props.push(["photo", {}, "uri", contact.photoUrl.trim()]);
+  }
+
+  if (contact.sourceUrl?.trim()) {
+    props.push(["source", {}, "uri", contact.sourceUrl.trim()]);
+  }
+
+  props.push(["categories", {}, "text", ["myCONTACTS", contact.source.trim()].filter(Boolean)]);
+
+  const note = buildVcardNote(contact);
+  if (note) {
+    props.push(["note", {}, "text", note]);
+  }
+
+  return ["vcard", props];
 }
 
 export function countGoogleCsvSlots(contacts: Contact[]): {

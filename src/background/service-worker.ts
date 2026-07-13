@@ -72,8 +72,7 @@ async function handleMessage(
         assertExtensionPageSender(sender);
         const contacts = validateContacts(message.payload.contacts);
         const format = validateExportFormat(message.payload.format);
-        const exported = exportContacts(contacts, format);
-        return { type: "EXPORT_RESULT", payload: exported };
+        return { type: "EXPORT_RESULT", payload: exportContacts(contacts, format) };
       }
       case "EXTRACT_CONTACTS":
         assertExtensionPageSender(sender);

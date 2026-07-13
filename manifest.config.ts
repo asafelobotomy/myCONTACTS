@@ -3,7 +3,7 @@ import { defineManifest } from "@crxjs/vite-plugin";
 export default defineManifest({
   manifest_version: 3,
   name: "myCONTACTS",
-  version: "0.2.0",
+  version: "0.2.2",
   description:
     "Extract, store, and export contact information from websites — local-first, no cloud.",
   permissions: ["storage", "sidePanel", "tabs", "activeTab", "scripting"],

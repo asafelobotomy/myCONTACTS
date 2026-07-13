@@ -5,6 +5,7 @@ import {
   googlePhoneLabel,
   injectVcardNLine,
   resolveExportNameFields,
+  serializeContactVcard30,
   toVcardTimestamp,
 } from "./export-standards";
 import type { Contact } from "./types";
@@ -77,5 +78,26 @@ describe("export standards", () => {
 
     const vcard = injectVcardNLine("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Test\r\nEND:VCARD\r\n", nLine);
     expect(vcard).toContain("N:Flynn;Aaron;;;");
+  });
+
+  it("serializes import-friendly vCard 3.0 text", () => {
+    const contact: Contact = {
+      id: "1",
+      source: "whatsapp-web",
+      displayName: "Aaron Flynn",
+      givenName: "Aaron",
+      familyName: "Flynn",
+      phones: [{ value: "+14155550100", e164: "+14155550100" }],
+      emails: [{ value: "aaron@example.com", type: "work" }],
+      extractedAt: "2026-01-01T00:00:00.000Z",
+      confidence: "structured",
+    };
+
+    const vcard = serializeContactVcard30(contact);
+    expect(vcard).toContain("VERSION:3.0");
+    expect(vcard).toContain("TEL;TYPE=CELL:+14155550100");
+    expect(vcard).toContain("EMAIL;TYPE=INTERNET;TYPE=WORK:aaron@example.com");
+    expect(vcard).not.toContain("KIND:");
+    expect(vcard).not.toContain("SOURCE:");
   });
 });

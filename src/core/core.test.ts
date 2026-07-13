@@ -186,7 +186,9 @@ describe("export service", () => {
     const result = exportContacts(sample, "vcard");
     expect(result.mimeType).toBe("text/vcard;charset=utf-8");
     expect(result.content).toContain("BEGIN:VCARD");
-    expect(result.content).toContain("VERSION:4.0");
+    expect(result.content).toContain("VERSION:3.0");
+    expect(result.content).not.toContain("VERSION:4.0");
+    expect(result.content).not.toContain("KIND:");
     expect(result.content).toContain("Export Test");
     expect(result.content).toContain("REV:");
     expect(result.content).toContain("CATEGORIES:");
@@ -211,7 +213,8 @@ describe("export service", () => {
 
     expect(result.content).toContain("FN:Aaron Flynn");
     expect(result.content).toContain("N:Flynn;Aaron;;;");
-    expect(result.content).toContain("TEL;TYPE=cell:");
+    expect(result.content).toContain("TEL;TYPE=CELL:+14155550104");
+    expect(result.content).not.toContain("tel:+");
   });
 
   it("exports WhatsApp contacts to vCard without NProperty errors", () => {
@@ -227,5 +230,22 @@ describe("export service", () => {
     expect(() => exportContacts([contact], "vcard")).not.toThrow();
     const result = exportContacts([contact], "vcard");
     expect(result.content).toContain("N:Flynn;Aaron;;;");
+  });
+
+  it("exports vCard with org field using structured ORG property", () => {
+    const contact = rawIndexedDbContactToContact(
+      {
+        savedName: "Aaron Flynn",
+        phone: "+353851354919",
+        id: "353851354919@s.whatsapp.net",
+        org: "Flynn Ltd",
+        title: "CEO",
+      },
+      "https://web.whatsapp.com/",
+    );
+
+    const result = exportContacts([contact], "vcard");
+    expect(result.content).toContain("ORG:Flynn Ltd");
+    expect(result.content).toContain("TITLE:CEO");
   });
 });

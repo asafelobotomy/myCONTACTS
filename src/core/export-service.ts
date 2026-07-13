@@ -1,48 +1,16 @@
 import {
-  CategoriesProperty,
-  DateTimeType,
-  EmailProperty,
-  FNProperty,
-  KindProperty,
-  NicknameProperty,
-  NoteProperty,
-  OrgProperty,
-  ParameterValueType,
-  PhotoProperty,
-  ProdidProperty,
-  RevProperty,
-  SourceProperty,
-  SpecialValueType,
-  TelProperty,
-  TextListType,
-  TextType,
-  TitleProperty,
-  TypeParameter,
-  UIDProperty,
-  URLProperty,
-  URIType,
-  VCARD,
-} from "vcard4";
-import { contactDisplayName } from "./contact-utils";
-import {
   buildGoogleCsvHeaders,
   buildGoogleCsvLabels,
   buildGoogleCsvNotes,
-  buildJcardNComponent,
   countGoogleCsvSlots,
   formatPhoneExportValue,
-  formatTelUri,
-  formatVcardNLine,
   googleEmailLabel,
   googlePhoneLabel,
-  injectJcardNComponent,
-  injectVcardNLine,
   resolveExportNameFields,
-  toVcardTimestamp,
-  vcardEmailType,
-  vcardPhoneType,
+  serializeContactJcard,
+  serializeContactVcard30,
 } from "./export-standards";
-import type { Contact, ContactEmail, ContactPhone, ExportFormat } from "./types";
+import type { Contact, ExportFormat } from "./types";
 
 export interface ExportResult {
   filename: string;
@@ -66,10 +34,7 @@ export function exportContacts(contacts: Contact[], format: ExportFormat): Expor
 }
 
 function exportJson(contacts: Contact[]): ExportResult {
-  const jcards = contacts.map((contact) => {
-    const jcard = contactToVcard(contact).reprJSON();
-    return injectJcardNComponent(jcard, buildJcardNComponent(contact));
-  });
+  const jcards = contacts.map((contact) => serializeContactJcard(contact));
 
   return {
     filename: `mycontacts-${timestamp()}.json`,
@@ -141,115 +106,13 @@ function buildGoogleCsvRow(
 }
 
 function exportVcard(contacts: Contact[]): ExportResult {
-  const cards = contacts
-    .map((contact) => injectVcardNLine(contactToVcard(contact).repr(), formatVcardNLine(contact)))
-    .join("\r\n");
+  const content = contacts.map((contact) => serializeContactVcard30(contact)).join("\r\n");
 
   return {
     filename: `mycontacts-${timestamp()}.vcf`,
     mimeType: "text/vcard;charset=utf-8",
-    content: cards,
+    content,
   };
-}
-
-function contactToVcard(contact: Contact): VCARD {
-  const props = [
-    new KindProperty([], new SpecialValueType("kindproperty", "individual")),
-    new FNProperty([], new TextType(contactDisplayName(contact))),
-    new UIDProperty([], new URIType(`urn:uuid:${contact.id}`)),
-    new ProdidProperty([], new TextType("-//myCONTACTS//EN")),
-    new RevProperty([], new DateTimeType("timestamp", toVcardTimestamp(contact.extractedAt))),
-  ];
-
-  const nicknames = (contact.alternateNames ?? [])
-    .map((name) => name.trim())
-    .filter(Boolean);
-  if (nicknames.length === 1) {
-    props.push(new NicknameProperty([], new TextType(nicknames[0]!)));
-  } else if (nicknames.length > 1) {
-    props.push(
-      new NicknameProperty(
-        [],
-        new TextListType(nicknames.map((name) => new TextType(name))),
-      ),
-    );
-  }
-
-  for (const phone of contact.phones ?? []) {
-    props.push(buildTelProperty(phone));
-  }
-
-  for (const email of contact.emails ?? []) {
-    props.push(buildEmailProperty(email));
-  }
-
-  if (contact.org) {
-    props.push(new OrgProperty([], new TextType(contact.org)));
-  }
-
-  if (contact.title) {
-    props.push(new TitleProperty([], new TextType(contact.title)));
-  }
-
-  for (const url of contact.urls ?? []) {
-    props.push(new URLProperty([], new URIType(url)));
-  }
-
-  if (contact.photoUrl) {
-    props.push(new PhotoProperty([], new URIType(contact.photoUrl)));
-  }
-
-  if (contact.sourceUrl) {
-    props.push(new SourceProperty([], new URIType(contact.sourceUrl)));
-  }
-
-  props.push(
-    new CategoriesProperty(
-      [],
-      new TextListType([
-        new TextType("myCONTACTS"),
-        new TextType(contact.source),
-      ]),
-    ),
-  );
-
-  const note = buildVcardNote(contact);
-  if (note) {
-    props.push(new NoteProperty([], new TextType(note)));
-  }
-
-  return new VCARD(props);
-}
-
-function buildTelProperty(phone: ContactPhone): TelProperty {
-  const type = vcardPhoneType(phone);
-  return new TelProperty(
-    [new TypeParameter("TelProperty", new ParameterValueType(type))],
-    new URIType(formatTelUri(phone)),
-  );
-}
-
-function buildEmailProperty(email: ContactEmail): EmailProperty {
-  const type = vcardEmailType(email);
-  const params = type
-    ? [new TypeParameter("EmailProperty", new ParameterValueType(type))]
-    : [];
-
-  return new EmailProperty(params, new TextType(email.value));
-}
-
-function buildVcardNote(contact: Contact): string | undefined {
-  const parts: string[] = [];
-
-  if (contact.notes?.trim()) {
-    parts.push(contact.notes.trim());
-  }
-
-  if (contact.sourceId?.trim()) {
-    parts.push(`Source ID: ${contact.sourceId.trim()}`);
-  }
-
-  return parts.length ? parts.join("\n") : undefined;
 }
 
 function csvEscape(value: string): string {
