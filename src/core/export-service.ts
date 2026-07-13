@@ -4,7 +4,6 @@ import {
   EmailProperty,
   FNProperty,
   KindProperty,
-  NProperty,
   NicknameProperty,
   NoteProperty,
   OrgProperty,
@@ -29,11 +28,15 @@ import {
   buildGoogleCsvHeaders,
   buildGoogleCsvLabels,
   buildGoogleCsvNotes,
+  buildJcardNComponent,
   countGoogleCsvSlots,
   formatPhoneExportValue,
   formatTelUri,
+  formatVcardNLine,
   googleEmailLabel,
   googlePhoneLabel,
+  injectJcardNComponent,
+  injectVcardNLine,
   resolveExportNameFields,
   toVcardTimestamp,
   vcardEmailType,
@@ -63,7 +66,10 @@ export function exportContacts(contacts: Contact[], format: ExportFormat): Expor
 }
 
 function exportJson(contacts: Contact[]): ExportResult {
-  const jcards = contacts.map((contact) => contactToVcard(contact).reprJSON());
+  const jcards = contacts.map((contact) => {
+    const jcard = contactToVcard(contact).reprJSON();
+    return injectJcardNComponent(jcard, buildJcardNComponent(contact));
+  });
 
   return {
     filename: `mycontacts-${timestamp()}.json`,
@@ -135,7 +141,9 @@ function buildGoogleCsvRow(
 }
 
 function exportVcard(contacts: Contact[]): ExportResult {
-  const cards = contacts.map((contact) => contactToVcard(contact).repr()).join("\r\n");
+  const cards = contacts
+    .map((contact) => injectVcardNLine(contactToVcard(contact).repr(), formatVcardNLine(contact)))
+    .join("\r\n");
 
   return {
     filename: `mycontacts-${timestamp()}.vcf`,
@@ -152,11 +160,6 @@ function contactToVcard(contact: Contact): VCARD {
     new ProdidProperty([], new TextType("-//myCONTACTS//EN")),
     new RevProperty([], new DateTimeType("timestamp", toVcardTimestamp(contact.extractedAt))),
   ];
-
-  const nProperty = buildVcardNProperty(contact);
-  if (nProperty) {
-    props.push(nProperty);
-  }
 
   const nicknames = (contact.alternateNames ?? [])
     .map((name) => name.trim())
@@ -233,26 +236,6 @@ function buildEmailProperty(email: ContactEmail): EmailProperty {
     : [];
 
   return new EmailProperty(params, new TextType(email.value));
-}
-
-function buildVcardNProperty(contact: Contact): NProperty | undefined {
-  const names = resolveExportNameFields(contact);
-  if (!names.givenName && !names.familyName) {
-    return undefined;
-  }
-
-  const toText = (value: string) => (value ? new TextType(value) : undefined);
-
-  return new NProperty(
-    [],
-    new SpecialValueType("NProperty", [
-      toText(names.familyName),
-      toText(names.givenName),
-      undefined,
-      undefined,
-      undefined,
-    ]),
-  );
 }
 
 function buildVcardNote(contact: Contact): string | undefined {

@@ -187,6 +187,65 @@ export function buildGoogleCsvLabels(contact: Contact): string {
   return labels.join(" ::: ");
 }
 
+export function escapeVcardText(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,");
+}
+
+export function formatVcardNLine(contact: Contact): string | undefined {
+  const names = resolveExportNameFields(contact);
+  if (!names.givenName && !names.familyName) {
+    return undefined;
+  }
+
+  return (
+    `N:${escapeVcardText(names.familyName)};${escapeVcardText(names.givenName)};;;`
+  );
+}
+
+export type JcardProperty = [string, Record<string, unknown>, string, unknown];
+
+export function buildJcardNComponent(contact: Contact): JcardProperty | undefined {
+  const names = resolveExportNameFields(contact);
+  if (!names.givenName && !names.familyName) {
+    return undefined;
+  }
+
+  return ["n", {}, "text", [names.familyName, names.givenName, "", "", ""]];
+}
+
+export function injectVcardNLine(vcardText: string, nLine: string | undefined): string {
+  if (!nLine) {
+    return vcardText;
+  }
+
+  const marker = "VERSION:4.0\r\n";
+  if (!vcardText.includes(marker) || vcardText.includes("\r\nN:")) {
+    return vcardText;
+  }
+
+  return vcardText.replace(marker, `${marker}${nLine}\r\n`);
+}
+
+export function injectJcardNComponent(
+  jcard: unknown,
+  nComponent: JcardProperty | undefined,
+): unknown {
+  if (!nComponent || !Array.isArray(jcard) || jcard[0] !== "vcard" || !Array.isArray(jcard[1])) {
+    return jcard;
+  }
+
+  const properties = jcard[1] as unknown[];
+  if (properties.some((entry) => Array.isArray(entry) && entry[0] === "n")) {
+    return jcard;
+  }
+
+  return ["vcard", [nComponent, ...properties]];
+}
+
 export function countGoogleCsvSlots(contacts: Contact[]): {
   maxPhones: number;
   maxEmails: number;

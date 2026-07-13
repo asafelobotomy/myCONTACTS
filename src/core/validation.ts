@@ -63,6 +63,9 @@ function validateContact(input: unknown, index: number): Contact {
     org: optionalString(record.org, `contacts[${index}].org`),
     title: optionalString(record.title, `contacts[${index}].title`),
     photoUrl: optionalString(record.photoUrl, `contacts[${index}].photoUrl`),
+    notes: optionalString(record.notes, `contacts[${index}].notes`),
+    sourceId: optionalString(record.sourceId, `contacts[${index}].sourceId`),
+    alternateNames: optionalStringArray(record.alternateNames, `contacts[${index}].alternateNames`),
     phones: optionalPhones(record.phones, index),
     emails: optionalEmails(record.emails, index),
     urls: optionalUrls(record.urls, index),
@@ -92,6 +95,19 @@ function optionalString(value: unknown, field: string): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed ? truncate(trimmed, field) : undefined;
+}
+
+function optionalStringArray(value: unknown, field: string): string[] | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new ValidationError(`${field} must be an array.`);
+  }
+
+  return value.map((entry, entryIndex) =>
+    requireString(entry, `${field}[${entryIndex}]`),
+  );
 }
 
 function optionalPhones(value: unknown, index: number): Contact["phones"] {

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildGoogleCsvHeaders,
+  formatVcardNLine,
   googlePhoneLabel,
+  injectVcardNLine,
   resolveExportNameFields,
   toVcardTimestamp,
 } from "./export-standards";
@@ -59,5 +61,21 @@ describe("export standards", () => {
 
   it("formats ISO timestamps for vCard REV", () => {
     expect(toVcardTimestamp("2026-01-01T00:00:00.000Z")).toBe("20260101T000000Z");
+  });
+
+  it("builds and injects structured N lines for vCard text", () => {
+    const contact: Contact = {
+      id: "1",
+      source: "whatsapp-web",
+      displayName: "Aaron Flynn",
+      extractedAt: "2026-01-01T00:00:00.000Z",
+      confidence: "structured",
+    };
+
+    const nLine = formatVcardNLine(contact);
+    expect(nLine).toBe("N:Flynn;Aaron;;;");
+
+    const vcard = injectVcardNLine("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Test\r\nEND:VCARD\r\n", nLine);
+    expect(vcard).toContain("N:Flynn;Aaron;;;");
   });
 });

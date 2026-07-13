@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { rawIndexedDbContactToContact } from "./adapters/whatsapp-contacts";
 import { contactDedupeKey, contactDisplayName, contactPersonName, applyContactInclusionPolicy, mergeContacts } from "./contact-utils";
 import { exportContacts } from "./export-service";
 import { normalizeContact, normalizeEmail, normalizePhone } from "./normalizer";
@@ -211,5 +212,20 @@ describe("export service", () => {
     expect(result.content).toContain("FN:Aaron Flynn");
     expect(result.content).toContain("N:Flynn;Aaron;;;");
     expect(result.content).toContain("TEL;TYPE=cell:");
+  });
+
+  it("exports WhatsApp contacts to vCard without NProperty errors", () => {
+    const contact = rawIndexedDbContactToContact(
+      {
+        savedName: "Aaron Flynn",
+        phone: "+353851354919",
+        id: "353851354919@s.whatsapp.net",
+      },
+      "https://web.whatsapp.com/",
+    );
+
+    expect(() => exportContacts([contact], "vcard")).not.toThrow();
+    const result = exportContacts([contact], "vcard");
+    expect(result.content).toContain("N:Flynn;Aaron;;;");
   });
 });
