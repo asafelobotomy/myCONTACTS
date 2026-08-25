@@ -1,5 +1,7 @@
 # myCONTACTS
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/U5R225QZH3)
+
 Local-first browser extension for extracting, storing, and exporting contact information from websites you open. No cloud, no telemetry — everything stays in your browser unless you export a file.
 
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-blue)
